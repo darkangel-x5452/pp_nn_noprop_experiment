@@ -62,7 +62,7 @@ class DenoisingNet(nn.Module):
         combined = torch.cat([x_flat, z_prev_flat], dim=1)
         h = torch.relu(self.fc1(combined))
         h = torch.relu(self.fc2(h))
-        return self.fc3(h)
+        return torch.tanh(self.fc3(h))  # Add activation to bound outputs
 
 
 if __name__ == "__main__":

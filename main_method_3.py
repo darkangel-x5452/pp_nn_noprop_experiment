@@ -48,11 +48,12 @@ class NoPropModel(nn.Module):
         self.register_buffer('snr', self.alphas / (1 - self.alphas + 1e-8))
 
     def kl_divergence(self, y):
-        """Proper KL divergence between q(z_0|y) and p(z_0) = N(0,1)"""
+        """Proper MEAN KL divergence instead of SUM"""
         alpha_0 = self.alphas[0]
         mu = torch.sqrt(alpha_0) * y
         var = 1 - alpha_0
-        return 0.5 * torch.sum(mu ** 2 + var - 1 - torch.log(var + 1e-8))
+        # Changed from sum() to mean()
+        return 0.5 * torch.mean(mu ** 2 + var - 1 - torch.log(var + 1e-8))
 
     def forward(self, x, train=True):
         if train:
@@ -79,6 +80,7 @@ if __name__ == "__main__":
 
     criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')  # Add this line
 
     # 4. Training loop
     epochs = 100
@@ -93,10 +95,12 @@ if __name__ == "__main__":
         # Add KL divergence (simplified)
         # kl_loss = 0.5 * torch.sum(model.alphas[0] / (1 - model.alphas[0]))  # Simplified KL
         kl_loss = model.kl_divergence(y_train)
-        total_loss = loss + 0.1 * kl_loss  # η=0.1 from paper
+        # Reduce η from 0.1 to 0.01
+        total_loss = loss + 0.01 * kl_loss  # η=0.1 from paper
 
         total_loss.backward()
         optimizer.step()
+        scheduler.step(total_loss)  # Add this right after optimizer.step()
 
         if epoch % 10 == 0:
             model.eval()
@@ -104,7 +108,8 @@ if __name__ == "__main__":
                 preds = model(X_test, train=False)
                 test_loss = criterion(preds, y_test)
                 acc = ((preds > 0.5).float() == y_test).float().mean()
-            print(f'Epoch {epoch}, Loss: {total_loss.item():.4f}, Test Acc: {acc:.4f}')
+            # print(f'Epoch {epoch}, Loss: {total_loss.item():.4f}, Test Acc: {acc:.4f}')
+            print(f'Epoch {epoch}, BCE: {loss.item():.4f}, KL: {kl_loss.item():.4f}, Total: {total_loss.item():.4f}, Test Acc: {acc:.4f}')
 
     # 5. Save model
     torch.save(model.state_dict(), 'noprop_model.pth')
