@@ -42,13 +42,20 @@ class NoPropModel(nn.Module):
         self.blocks = nn.ModuleList([DenoiseBlock(feature_dim, hidden_dim) for _ in range(T)])
         self.final_layer = nn.Linear(1, 1)
 
-        # Cosine noise schedule
-        self.alphas = torch.cos(torch.linspace(0, torch.pi / 2, T + 1)) ** 2
-        self.snr = self.alphas / (1 - self.alphas)
+        # Adjusted cosine schedule (prevents alpha=1)
+        angles = torch.linspace(0.01, torch.pi / 2 - 0.01, T + 1)
+        self.alphas = torch.cos(angles) ** 2
+        self.register_buffer('snr', self.alphas / (1 - self.alphas + 1e-8))
+
+    def kl_divergence(self, y):
+        """Proper KL divergence between q(z_0|y) and p(z_0) = N(0,1)"""
+        alpha_0 = self.alphas[0]
+        mu = torch.sqrt(alpha_0) * y
+        var = 1 - alpha_0
+        return 0.5 * torch.sum(mu ** 2 + var - 1 - torch.log(var + 1e-8))
 
     def forward(self, x, train=True):
         if train:
-            # During training: sample random time step
             t = torch.randint(1, self.T + 1, (1,)).item()
             alpha_t = self.alphas[t]
 
@@ -56,22 +63,20 @@ class NoPropModel(nn.Module):
             noise = torch.randn_like(y_train) * torch.sqrt(1 - alpha_t)
             z_t = alpha_t ** 0.5 * y_train + noise
 
-            # Predict clean label
             pred = self.blocks[t - 1](x, z_t)
             return torch.sigmoid(pred)
         else:
-            # Inference: denoising chain
-            z = torch.randn_like(y_test)  # Start from noise
+            z = torch.randn_like(y_test)
             for t in reversed(range(self.T)):
                 alpha_t = self.alphas[t + 1]
                 pred = self.blocks[t](x, z)
                 z = (alpha_t ** 0.5 * pred) + ((1 - alpha_t) ** 0.5) * torch.randn_like(z)
             return torch.sigmoid(self.final_layer(z))
 
-
 if __name__ == "__main__":
     # 3. Training setup
     model = NoPropModel(T=5)
+
     criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
@@ -86,7 +91,8 @@ if __name__ == "__main__":
         loss = criterion(outputs, y_train)
 
         # Add KL divergence (simplified)
-        kl_loss = 0.5 * torch.sum(model.alphas[0] / (1 - model.alphas[0]))  # Simplified KL
+        # kl_loss = 0.5 * torch.sum(model.alphas[0] / (1 - model.alphas[0]))  # Simplified KL
+        kl_loss = model.kl_divergence(y_train)
         total_loss = loss + 0.1 * kl_loss  # η=0.1 from paper
 
         total_loss.backward()
