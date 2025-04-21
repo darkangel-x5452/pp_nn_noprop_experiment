@@ -1,0 +1,6 @@
+numpy #>=1,<2
+pandas
+#pyarrow==14.0.1
+scikit-learn
+tqdm
+python-dotenv==1.0.1
